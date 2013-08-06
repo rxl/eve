@@ -12,6 +12,6 @@
 
 # flake8: noqa
 from eve.methods.get import get, getitem
-from eve.methods.post import post
+from eve.methods.post import post, _post
 from eve.methods.patch import patch
 from eve.methods.delete import delete, delete_resource

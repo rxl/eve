@@ -22,6 +22,11 @@ from eve.methods.common import parse, payload, ratelimit
 @ratelimit()
 @requires_auth('resource')
 def post(resource):
+    payl = payload()
+    return _post(resource, payl)
+
+def _post(resource, payl):
+    print "_post called"
     """ Adds one or more documents to a resource. Each document is validated
     against the domain schema. If validation passes the document is inserted
     and ID_FIELD, LAST_UPDATED and DATE_CREATED along with a link to the
@@ -69,7 +74,6 @@ def post(resource):
     issues = []
 
     # validation, and additional fields
-    payl = payload()
     for key, value in payl.items():
         document = []
         doc_issues = []
@@ -129,6 +133,7 @@ def post(resource):
             # add any additional field that might be needed
             allowed_fields = [x for x in resource_def['extra_response_fields']
                               if x in document.keys()]
+            print allowed_fields
             for field in allowed_fields:
                 response_item[field] = document[field]
 
