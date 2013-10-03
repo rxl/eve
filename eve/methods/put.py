@@ -10,6 +10,7 @@
     :license: BSD, see LICENSE for more details.
 """
 
+import traceback
 from werkzeug import exceptions
 from datetime import datetime
 from eve.auth import requires_auth
@@ -79,8 +80,7 @@ def put(resource, **lookup):
                 request_auth_value = app.auth.request_auth_value
                 if request_auth_value and request.authorization:
                     document[auth_field] = request_auth_value
-            etag = document_etag(document)
-
+            
             # notify callbacks
             getattr(app, "on_insert")(resource, [document])
             getattr(app, "on_insert_%s" % resource)([document])
@@ -90,8 +90,11 @@ def put(resource, **lookup):
             response_item[config.ID_FIELD] = object_id
             response_item[config.LAST_UPDATED] = last_modified
 
-            # metadata
-            response_item['etag'] = etag
+            # calculate and set etag of posted doc
+            #lookup = { config.ID_FIELD: response_item[config.ID_FIELD] }
+            #posted_doc = app.data.find_one(resource, **lookup)
+            response_item['etag'] = document_etag(document)
+
             if resource_def['hateoas']:
                 response_item['_links'] = {'self': document_link(resource,
                                                                  object_id)}
@@ -104,6 +107,7 @@ def put(resource, **lookup):
     except exceptions.InternalServerError as e:
         raise e
     except Exception as e:
+        traceback.print_exc()
         # consider all other exceptions as Bad Requests
         abort(400, description=debug_error_message(
             'An exception occurred: %s' % e

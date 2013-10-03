@@ -11,6 +11,7 @@
     :license: BSD, see LICENSE for more details.
 """
 
+import traceback
 from datetime import datetime
 from flask import current_app as app, request
 from eve.utils import document_link, config, document_etag
@@ -123,6 +124,7 @@ def post(resource, payl=None):
         except ValidationError as e:
             raise e
         except Exception as e:
+            traceback.print_exc()
             # most likely a problem with the incoming payload, report back to
             # the client as if it was a validation issue
             doc_issues.append(str(e))
@@ -151,7 +153,12 @@ def post(resource, payl=None):
             response_item[config.ID_FIELD] = ids.pop(0)
             document = documents.pop(0)
             response_item[config.LAST_UPDATED] = document[config.LAST_UPDATED]
+
+            # get etag of posted doc
+            lookup = { config.ID_FIELD: response_item[config.ID_FIELD] }
+            posted_doc = app.data.find_one(resource, **lookup)
             response_item['etag'] = document_etag(document)
+
             if resource_def['hateoas']:
                 response_item['_links'] = \
                     {'self': document_link(resource,
