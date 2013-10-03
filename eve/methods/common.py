@@ -10,6 +10,7 @@
     :license: BSD, see LICENSE for more details.
 """
 
+import traceback
 import time
 from datetime import datetime
 from flask import current_app as app, request, abort, g, Response
@@ -17,7 +18,7 @@ import simplejson as json
 from ..utils import str_to_date, parse_request, document_etag, config, \
     request_method, debug_error_message
 from functools import wraps
-
+from werkzeug.exceptions import BadRequestKeyError, InternalServerError
 
 def get_document(resource, **lookup):
     """ Retrieves and return a single document. Since this function is used by
@@ -263,3 +264,83 @@ def epoch():
     .. versionadded:: 0.0.5
     """
     return datetime(1970, 1, 1)
+
+def validate_document(document, validator, resource, resource_def, original=None):
+    doc_issues = []
+
+    try:
+        document = parse(document, resource)
+
+        if original:
+            # document is being replaced (as with a PUT request)
+            object_id = original[config.ID_FIELD]
+            validation = validator.validate_replace(document, object_id)
+        else:
+            # document is being inserted (as with a POST request)
+            validation = validator.validate(document)
+
+        if validation:
+            # validation is successful
+            document[config.LAST_UPDATED] = datetime.utcnow().replace(microsecond=0)
+            if original:
+                document[config.ID_FIELD] = object_id
+                document[config.DATE_CREATED] = original[config.DATE_CREATED]
+            else:
+                document[config.DATE_CREATED] = document[config.LAST_UPDATED]
+            
+            # if 'user-restricted resource access' is enabled
+            # and there's an Auth request active,
+            # inject the auth_field into the document
+            auth_field = resource_def['auth_field']
+            if auth_field:
+                request_auth_value = app.auth.request_auth_value
+                if request_auth_value and request.authorization:
+                    document[auth_field] = request_auth_value
+        else:
+            # validation errors added to list of document issues
+            doc_issues.extend(validator.errors)
+    except ValidationError as e:
+        raise e
+    except InternalServerError as e:
+        raise e
+    except Exception as e:
+        traceback.print_exc()
+        # most likely a problem with the incoming payload, report back to
+        # the client as if it was a validation issue
+        doc_issues.append(str(e))
+
+    return document, doc_issues
+
+def failure_resp_item(doc_issues):
+    return {
+        'status': config.STATUS_ERR,
+        'issues': doc_issues
+    }
+
+def success_resp_item(id, document, resource, resource_def):
+    response_item = {}
+    response_item['status'] = config.STATUS_OK
+    response_item[config.ID_FIELD] = id
+    document = document
+    response_item[config.LAST_UPDATED] = document[config.LAST_UPDATED]
+
+    # add in etag of posted doc
+    lookup = { config.ID_FIELD: response_item[config.ID_FIELD] }
+    posted_doc = app.data.find_one(resource, **lookup)
+    print document_etag(document)
+    print document_etag(posted_doc)
+    response_item['etag'] = document_etag(posted_doc)
+
+    # add in hateoas links
+    if resource_def['hateoas']:
+        response_item['_links'] = \
+            {'self': document_link(resource,
+                                   response_item[config.ID_FIELD])}
+
+    # add any additional field that might be needed
+    allowed_fields = [x for x in resource_def['extra_response_fields']
+                      if x in document.keys()]
+    for field in allowed_fields:
+        response_item[field] = document[field]
+
+    return response_item

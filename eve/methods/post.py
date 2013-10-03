@@ -11,13 +11,13 @@
     :license: BSD, see LICENSE for more details.
 """
 
-import traceback
 from datetime import datetime
 from flask import current_app as app, request
 from eve.utils import document_link, config, document_etag
 from eve.auth import requires_auth
 from eve.validation import ValidationError
 from eve.methods.common import parse, payload, ratelimit
+from eve.methods.common import validate_document, failure_resp_item, success_resp_item
 
 
 @ratelimit()
@@ -89,48 +89,26 @@ def post(resource, payl=None):
        JSON links. Superflous ``response`` container removed.
     """
 
-    date_utc = datetime.utcnow().replace(microsecond=0)
     resource_def = app.config['DOMAIN'][resource]
     schema = resource_def['schema']
     validator = app.validator(schema, resource)
     documents = []
     issues = []
+    singular_inserts = app.config['SINGULAR_INSERTS']
 
     # validation, and additional fields
     if payl is None:
         payl = payload()
-    for key, value in payl.items():
-        document = []
-        doc_issues = []
-        try:
-            document = parse(value, resource)
-            validation = validator.validate(document)
-            if validation:
-                # validation is successful
-                document[config.LAST_UPDATED] = \
-                    document[config.DATE_CREATED] = date_utc
-
-                # if 'user-restricted resource access' is enabled
-                # and there's an Auth request active,
-                # inject the auth_field into the document
-                auth_field = resource_def['auth_field']
-                if auth_field:
-                    request_auth_value = app.auth.request_auth_value
-                    if request_auth_value and request.authorization:
-                        document[auth_field] = request_auth_value
-            else:
-                # validation errors added to list of document issues
-                doc_issues.extend(validator.errors)
-        except ValidationError as e:
-            raise e
-        except Exception as e:
-            traceback.print_exc()
-            # most likely a problem with the incoming payload, report back to
-            # the client as if it was a validation issue
-            doc_issues.append(str(e))
-
+    
+    if singular_inserts:
+        payl_items = [('item', payl)]
+    else:
+        payl_items = payl.items()
+    
+    for key, value in payl_items:
+        document, doc_issues = validate_document(value, validator, resource,
+                                                 resource_def)
         issues.append(doc_issues)
-
         if len(doc_issues) == 0:
             documents.append(document)
 
@@ -138,38 +116,31 @@ def post(resource, payl=None):
         # notify callbacks
         getattr(app, "on_insert")(resource, documents)
         getattr(app, "on_insert_%s" % resource)(documents)
+        
         # bulk insert
         ids = app.data.insert(resource, documents)
 
     # build response payload
     response = {}
-    for key, doc_issues in zip(payl.keys(), issues):
-        response_item = {}
+    response_items = []
+
+    if singular_inserts:
+        response_data = zip(['item'], issues)
+    else:
+        response_data = zip(payl.keys(), issues)
+
+    for key, doc_issues in response_data:
         if len(doc_issues):
-            response_item['status'] = config.STATUS_ERR
-            response_item['issues'] = doc_issues
+            response_item = failure_resp_item(doc_issues)
         else:
-            response_item['status'] = config.STATUS_OK
-            response_item[config.ID_FIELD] = ids.pop(0)
-            document = documents.pop(0)
-            response_item[config.LAST_UPDATED] = document[config.LAST_UPDATED]
+            response_item = success_resp_item(ids.pop(0), documents.pop(0),
+                                              resource, resource_def)
+        response_items.append((key, response_item))
 
-            # get etag of posted doc
-            lookup = { config.ID_FIELD: response_item[config.ID_FIELD] }
-            posted_doc = app.data.find_one(resource, **lookup)
-            response_item['etag'] = document_etag(document)
-
-            if resource_def['hateoas']:
-                response_item['_links'] = \
-                    {'self': document_link(resource,
-                                           response_item[config.ID_FIELD])}
-
-            # add any additional field that might be needed
-            allowed_fields = [x for x in resource_def['extra_response_fields']
-                              if x in document.keys()]
-            for field in allowed_fields:
-                response_item[field] = document[field]
-
-        response[key] = response_item
+    if singular_inserts:
+        response = response_items[0]
+    else:
+        for key, response_item in response_items:
+            response[key] = response_item
 
     return response, None, None, 200

@@ -10,8 +10,6 @@
     :license: BSD, see LICENSE for more details.
 """
 
-import traceback
-from werkzeug import exceptions
 from datetime import datetime
 from eve.auth import requires_auth
 from eve.validation import ValidationError
@@ -19,7 +17,7 @@ from flask import current_app as app, abort, request
 from eve.utils import document_etag, document_link, config, debug_error_message
 from eve.methods.common import get_document, parse, payload as payload_, \
     ratelimit
-
+from eve.methods.common import validate_document, failure_resp_item, success_resp_item
 
 @ratelimit()
 @requires_auth('item')
@@ -41,11 +39,6 @@ def put(resource, **lookup):
     schema = resource_def['schema']
     validator = app.validator(schema, resource)
 
-    payload = payload_()
-    if len(payload) > 1:
-        abort(400, description=debug_error_message(
-            'Only one update-per-document supported'))
-
     original = get_document(resource, **lookup)
     if not original:
         # not found
@@ -53,72 +46,29 @@ def put(resource, **lookup):
 
     last_modified = None
     etag = None
-    issues = []
     object_id = original[config.ID_FIELD]
 
-    # TODO the list is needed for Py33. Find a less ridiculous alternative?
-    key = list(payload.keys())[0]
-    document = payload[key]
+    payload = payload_()
+    document = payload
+
+    document, issues = validate_document(document, validator, resource,
+                                             resource_def, original=original)
+    if len(issues) == 0:
+        last_modified = document[config.LAST_UPDATED]
+
+        # notify callbacks
+        getattr(app, "on_insert")(resource, [document])
+        getattr(app, "on_insert_%s" % resource)([document])
+
+        # single replacement
+        app.data.replace(resource, object_id, document)
 
     response_item = {}
-
-    try:
-        document = parse(document, resource)
-        validation = validator.validate_replace(document, object_id)
-        if validation:
-            last_modified = datetime.utcnow().replace(microsecond=0)
-            document[config.ID_FIELD] = object_id
-            document[config.LAST_UPDATED] = last_modified
-            # TODO what do we need here: the original creation date or the
-            # PUT date? Going for the former seems reasonable.
-            document[config.DATE_CREATED] = original[config.DATE_CREATED]
-
-            # if 'user-restricted resource access' is enabled and there's
-            # an Auth request active, inject the username into the document
-            auth_field = resource_def['auth_field']
-            if auth_field:
-                request_auth_value = app.auth.request_auth_value
-                if request_auth_value and request.authorization:
-                    document[auth_field] = request_auth_value
-            
-            # notify callbacks
-            getattr(app, "on_insert")(resource, [document])
-            getattr(app, "on_insert_%s" % resource)([document])
-
-            app.data.replace(resource, object_id, document)
-
-            response_item[config.ID_FIELD] = object_id
-            response_item[config.LAST_UPDATED] = last_modified
-
-            # calculate and set etag of posted doc
-            #lookup = { config.ID_FIELD: response_item[config.ID_FIELD] }
-            #posted_doc = app.data.find_one(resource, **lookup)
-            response_item['etag'] = document_etag(document)
-
-            if resource_def['hateoas']:
-                response_item['_links'] = {'self': document_link(resource,
-                                                                 object_id)}
-        else:
-            issues.extend(validator.errors)
-    except ValidationError as e:
-        # TODO should probably log the error and abort 400 instead (when we
-        # got logging)
-        issues.append(str(e))
-    except exceptions.InternalServerError as e:
-        raise e
-    except Exception as e:
-        traceback.print_exc()
-        # consider all other exceptions as Bad Requests
-        abort(400, description=debug_error_message(
-            'An exception occurred: %s' % e
-        ))
-
     if len(issues):
-        response_item['issues'] = issues
-        response_item['status'] = config.STATUS_ERR
+        response_item = failure_resp_item(issues)
     else:
-        response_item['status'] = config.STATUS_OK
+        response_item = success_resp_item(object_id, document, resource,
+                                          resource_def)
+    response = response_item
 
-    response = {}
-    response[key] = response_item
     return response, last_modified, etag, 200
