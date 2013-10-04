@@ -19,6 +19,7 @@ from ..utils import str_to_date, parse_request, document_etag, config, \
     request_method, debug_error_message
 from functools import wraps
 from werkzeug.exceptions import BadRequestKeyError, InternalServerError
+from eve.validation import ValidationError
 
 def get_document(resource, **lookup):
     """ Retrieves and return a single document. Since this function is used by

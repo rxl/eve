@@ -11,11 +11,9 @@
     :license: BSD, see LICENSE for more details.
 """
 
-from datetime import datetime
 from flask import current_app as app, request
 from eve.utils import document_link, config, document_etag
 from eve.auth import requires_auth
-from eve.validation import ValidationError
 from eve.methods.common import parse, payload, ratelimit
 from eve.methods.common import validate_document, failure_resp_item, success_resp_item
 
@@ -116,7 +114,7 @@ def post(resource, payl=None):
         # notify callbacks
         getattr(app, "on_insert")(resource, documents)
         getattr(app, "on_insert_%s" % resource)(documents)
-        
+
         # bulk insert
         ids = app.data.insert(resource, documents)
 
