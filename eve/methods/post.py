@@ -15,8 +15,9 @@ from flask import current_app as app, request
 from eve.utils import document_link, config, document_etag
 from eve.auth import requires_auth
 from eve.methods.common import parse, payload, ratelimit
-from eve.methods.common import validate_document, failure_resp_item, success_resp_item
-
+from eve.methods.common import validate_document, failure_resp_item, \
+    success_resp_item
+from werkzeug.datastructures import ImmutableMultiDict, MultiDict, ImmutableDict
 
 @ratelimit()
 @requires_auth('resource')
@@ -96,14 +97,20 @@ def post(resource, payl=None):
 
     # validation, and additional fields
     if payl is None:
-        payl = payload().copy().to_dict()
-    
+        if isinstance(payl, ImmutableMultiDict):
+            payl = payload().copy()
+        else:
+            payl = payload()
+        if isinstance(payl, MultiDict):
+            payl = payl.to_dict()
+
     if singular_inserts:
         payl_items = [('item', payl)]
     else:
         payl_items = payl.items()
     
     for key, value in payl_items:
+        print value
         document, doc_issues = validate_document(value, validator, resource,
                                                  resource_def)
         issues.append(doc_issues)
