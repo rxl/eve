@@ -96,7 +96,7 @@ def post(resource, payl=None):
 
     # validation, and additional fields
     if payl is None:
-        payl = payload()
+        payl = payload().copy().to_dict()
     
     if singular_inserts:
         payl_items = [('item', payl)]

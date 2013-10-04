@@ -328,8 +328,6 @@ def success_resp_item(id, document, resource, resource_def):
     # add in etag of posted doc
     lookup = { config.ID_FIELD: response_item[config.ID_FIELD] }
     posted_doc = app.data.find_one(resource, **lookup)
-    print document_etag(document)
-    print document_etag(posted_doc)
     response_item['etag'] = document_etag(posted_doc)
 
     # add in hateoas links
