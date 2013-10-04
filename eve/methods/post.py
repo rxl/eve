@@ -143,9 +143,11 @@ def post(resource, payl=None):
         response_items.append((key, response_item))
 
     if singular_inserts:
-        response = response_items[0]
+        response = response_items[0][1]
     else:
         for key, response_item in response_items:
             response[key] = response_item
+
+    print response
 
     return response, None, None, 200
